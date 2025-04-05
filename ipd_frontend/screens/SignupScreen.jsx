@@ -8,14 +8,18 @@ import {
   Image,
   SafeAreaView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
+import { signup } from '../services/api';
 
 const SignupScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleSignup = () => {
-    // Simple validation
+  const handleSignup = async () => {
     if (!name.trim()) {
       Alert.alert('Error', 'Please enter your name');
       return;
@@ -24,12 +28,23 @@ const SignupScreen = ({ navigation }) => {
       Alert.alert('Error', 'Please enter your email');
       return;
     }
+    if (!password.trim()) {
+      Alert.alert('Error', 'Please enter your password');
+      return;
+    }
 
-    // In a real app, you would perform registration here
-    console.log('Signing up with', name, email);
-    
-    // Navigate to the main app with tab navigation
-    navigation.navigate('MainApp');
+    setLoading(true);
+    try {
+      await signup(name, email, password);
+      Alert.alert('Success', 'Account created successfully! Please login.', [
+        { text: 'OK', onPress: () => navigation.navigate('Login') }
+      ]);
+    } catch (error) {
+      console.log(error);
+      Alert.alert('Error', error.detail || 'Failed to create account. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -52,9 +67,10 @@ const SignupScreen = ({ navigation }) => {
             />
             <TextInput
               style={styles.input}
-              placeholder="Your name"
+              placeholder="username"
               value={name}
               onChangeText={setName}
+              editable={!loading}
             />
           </View>
 
@@ -70,12 +86,42 @@ const SignupScreen = ({ navigation }) => {
               onChangeText={setEmail}
               keyboardType="email-address"
               autoCapitalize="none"
+              editable={!loading}
             />
+          </View>
+
+          <View style={styles.inputWrapper}>
+            <Image
+              source={require('../assets/images/lock.png')}
+              style={styles.inputIcon}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="••••••"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              editable={!loading}
+            />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+              <Image
+                source={require('../assets/images/eye.png')}
+                style={styles.inputIcon}
+              />
+            </TouchableOpacity>
           </View>
         </View>
 
-        <TouchableOpacity style={styles.button} onPress={handleSignup}>
-          <Text style={styles.buttonText}>Signup</Text>
+        <TouchableOpacity 
+          style={[styles.button, loading && styles.buttonDisabled]} 
+          onPress={handleSignup}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.buttonText}>Signup</Text>
+          )}
         </TouchableOpacity>
 
         <View style={styles.footer}>
@@ -143,6 +189,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 32,
+  },
+  buttonDisabled: {
+    backgroundColor: '#B0B0B0',
   },
   buttonText: {
     color: '#FFFFFF',

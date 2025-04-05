@@ -459,11 +459,11 @@ const AirQualityMap = () => {
                   <Text style={styles.aqiLabel}>
                     {userAQICategory.label}
                   </Text>
-                  {userSensorData.created_at && (
+                  {/* {userSensorData.created_at && (
                     <Text style={styles.timestampText}>
                       Updated: {new Date(userSensorData.created_at).toLocaleTimeString()}
                     </Text>
-                  )}
+                  )} */}
                 </View>
               </View>
             )}

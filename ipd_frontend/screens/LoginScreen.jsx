@@ -8,29 +8,41 @@ import {
   Image,
   SafeAreaView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
+import { login } from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
-    // Simple validation
-    // if (!email.trim()) {
-    //   Alert.alert('Error', 'Please enter your email');
-    //   return;
-    // }
-    // if (!password.trim()) {
-    //   Alert.alert('Error', 'Please enter your password');
-    //   return;
-    // }
+  const handleLogin = async () => {
+    if (!email.trim()) {
+      Alert.alert('Error', 'Please enter your email');
+      return;
+    }
+    if (!password.trim()) {
+      Alert.alert('Error', 'Please enter your password');
+      return;
+    }
 
-    // In a real app, you would perform authentication here
-    console.log('Logging in with', email, password);
-    
-    // Navigate to the main app with tab navigation
-    navigation.navigate('MainApp');
+    setLoading(true);
+    try {
+      const response = await login(email, password);
+      
+      // Store the token
+      await AsyncStorage.setItem('@Auth:token', response.access_token);
+      
+      // Navigate to main app
+      navigation.replace('MainApp');
+    } catch (error) {
+      Alert.alert('Error', error.detail || 'Failed to login. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -58,6 +70,7 @@ const LoginScreen = ({ navigation }) => {
               onChangeText={setEmail}
               keyboardType="email-address"
               autoCapitalize="none"
+              editable={!loading}
             />
           </View>
 
@@ -72,6 +85,7 @@ const LoginScreen = ({ navigation }) => {
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
+              editable={!loading}
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
               <Image
@@ -94,8 +108,16 @@ const LoginScreen = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.button} onPress={handleLogin}>
-          <Text style={styles.buttonText}>Login</Text>
+        <TouchableOpacity 
+          style={[styles.button, loading && styles.buttonDisabled]} 
+          onPress={handleLogin}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.buttonText}>Login</Text>
+          )}
         </TouchableOpacity>
 
         <View style={styles.footer}>
@@ -189,6 +211,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 32,
+  },
+  buttonDisabled: {
+    backgroundColor: '#B0B0B0',
   },
   buttonText: {
     color: '#FFFFFF',
