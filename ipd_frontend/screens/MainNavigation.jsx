@@ -7,6 +7,7 @@ import OnboardingScreens from './OnboardingScreens';
 import LoginScreen from './LoginScreen';
 import SignupScreen from './SignupScreen';
 import TabNavigation from './TabNavigation';
+import AsthmaForm from './AsthmaForm';
 import { ActivityIndicator, View } from 'react-native';
 
 const Stack = createNativeStackNavigator();
@@ -33,6 +34,7 @@ const Navigation = () => {
       <Stack.Screen name="Onboarding" component={OnboardingScreens} />
       <Stack.Screen name="Signup" component={SignupScreen} />
       <Stack.Screen name="Login" component={LoginScreen} />
+      <Stack.Screen name="AsthmaForm" component={AsthmaForm} />
       <Stack.Screen 
         name="MainApp" 
         component={TabNavigation}

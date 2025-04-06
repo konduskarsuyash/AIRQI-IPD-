@@ -12,12 +12,27 @@ import {
 } from 'react-native';
 import { login } from '../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import api from '../services/api';
 
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const checkAsthmaFormStatus = async (token) => {
+    try {
+      const response = await api.get('/asthma-form-status', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      return response.data.has_submitted;
+    } catch (error) {
+      console.error('Error checking asthma form status:', error);
+      return false;
+    }
+  };
 
   const handleLogin = async () => {
     if (!email.trim()) {
@@ -36,8 +51,15 @@ const LoginScreen = ({ navigation }) => {
       // Store the token
       await AsyncStorage.setItem('@Auth:token', response.access_token);
       
-      // Navigate to main app
-      navigation.replace('MainApp');
+      // Check asthma form status
+      const hasSubmittedAsthmaForm = await checkAsthmaFormStatus(response.access_token);
+      
+      // Navigate based on asthma form status
+      if (hasSubmittedAsthmaForm) {
+        navigation.replace('MainApp');
+      } else {
+        navigation.replace('AsthmaForm');
+      }
     } catch (error) {
       Alert.alert('Error', error.detail || 'Failed to login. Please try again.');
     } finally {
