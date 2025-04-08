@@ -1,3 +1,5 @@
 .env
 env
 static/
+uploaded_files/
+tmp/
