@@ -1,10 +1,11 @@
 import { View, Text, StyleSheet, SafeAreaView, StatusBar, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native"
 import { Svg, Circle } from "react-native-svg"
 import * as Location from 'expo-location';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import AQIForecast from './AQIForecast';
 import { createClient } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Supabase configuration
 const SUPABASE_URL = "https://dqyvyyvzymrbsxwpwbab.supabase.co";
@@ -17,6 +18,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // PostgreSQL connection info (for reference only, not used in the app)
 // postgresql://postgres:DJ01v$04@db.dqyvyyvzymrbsxwpwbab.supabase.co:5432/postgres
 
+// Constants for AQI change threshold
+const AQI_CHANGE_THRESHOLD = 20; // Only call API if AQI changes by more than this value
+
 export default function HomeScreen({ navigation }) {
   const username = "Anamoul"
   const [locationName, setLocationName] = useState('Loading...');
@@ -27,6 +31,8 @@ export default function HomeScreen({ navigation }) {
   const [error, setError] = useState(null);
   const [newDataReceived, setNewDataReceived] = useState(false);
   const [recommendation, setRecommendation] = useState(null);
+  const [isFetchingRecommendation, setIsFetchingRecommendation] = useState(false);
+  const lastAQI = useRef(null);
 
   useEffect(() => {
     getLocation();
@@ -71,8 +77,83 @@ export default function HomeScreen({ navigation }) {
     };
   }, []);
 
-  // Generate health recommendation based on AQI
-  const generateRecommendation = (aqiValue) => {
+  // Function to fetch recommendations from the API
+  const fetchRecommendations = async (aqiValue) => {
+    try {
+      setIsFetchingRecommendation(true);
+      // Get the JWT token and user_id from storage
+      const token = await AsyncStorage.getItem('@Auth:token');
+      const userId = await AsyncStorage.getItem('@Auth:user_id');
+      
+      console.log('Token retrieved in fetchRecommendations:', token);
+      console.log('User ID retrieved in fetchRecommendations:', userId);
+      
+      if (!token || !userId) {
+        throw new Error('No authentication token or user ID found');
+      }
+
+      const response = await fetch('http://192.168.2.50:8000/get_recommendations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Bearer ${token}`
+        },
+        body: `user_id=${userId}`,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Token expired or invalid
+          await AsyncStorage.removeItem('@Auth:token');
+          await AsyncStorage.removeItem('@Auth:user_id');
+          navigation.navigate('Login');
+          return;
+        }
+        throw new Error('Failed to fetch recommendations');
+      }
+
+      const data = await response.json();
+      console.log('Recommendations received:', data);
+      
+      // Update the recommendation state with the API response
+      setRecommendation({
+        icon: "information-circle",
+        title: "Personalized Health Recommendation",
+        message: data.recommendations,
+        color: getAQIStatus(aqiValue).color,
+        level: getAQILevel(aqiValue)
+      });
+    } catch (error) {
+      console.error('Error fetching recommendations:', error);
+      // Fallback to local recommendations if API fails
+      generateLocalRecommendation(aqiValue);
+    } finally {
+      setIsFetchingRecommendation(false);
+    }
+  };
+
+  // Function to determine if we should fetch new recommendations
+  const shouldFetchRecommendations = (newAQI) => {
+    if (lastAQI.current === null) {
+      return true; // First time, always fetch
+    }
+
+    const aqiChange = Math.abs(newAQI - lastAQI.current);
+    return aqiChange >= AQI_CHANGE_THRESHOLD;
+  };
+
+  // Function to get AQI level
+  const getAQILevel = (aqi) => {
+    if (aqi <= 50) return "good";
+    if (aqi <= 100) return "moderate";
+    if (aqi <= 150) return "sensitive";
+    if (aqi <= 200) return "unhealthy";
+    if (aqi <= 300) return "very-unhealthy";
+    return "hazardous";
+  };
+
+  // Local recommendation generator (fallback)
+  const generateLocalRecommendation = (aqiValue) => {
     let rec = {
       icon: "information-circle",
       title: "Air Quality Information",
@@ -134,6 +215,18 @@ export default function HomeScreen({ navigation }) {
     setRecommendation(rec);
   };
 
+  // Generate health recommendation based on AQI
+  const generateRecommendation = (aqiValue) => {
+    if (shouldFetchRecommendations(aqiValue)) {
+      console.log('AQI change significant, fetching new recommendations');
+      fetchRecommendations(aqiValue);
+      lastAQI.current = aqiValue;
+    } else {
+      console.log('AQI change not significant, using local recommendations');
+      generateLocalRecommendation(aqiValue);
+    }
+  };
+
   // Helper function to map sensor data to our app format
   const mapSensorData = (data) => {
     return {
@@ -187,7 +280,7 @@ export default function HomeScreen({ navigation }) {
     }
     
     try {
-      console.log('Fetching data from Supabase...');
+      // console.log('Fetching data from Supabase...');
       
       const { data, error } = await supabase
         .from('sensor_data')
@@ -203,7 +296,7 @@ export default function HomeScreen({ navigation }) {
       }
   
       if (data && data.length > 0) {
-        console.log('Fetched air quality data:', data[0]);
+        // console.log('Fetched air quality data:', data[0]);
         // Map the data using the same helper function
         const mappedData = mapSensorData(data[0]);
         setAirQualityData(mappedData);
@@ -366,6 +459,42 @@ const getAQIStatus = (aqi) => {
     { name: "VOC", value: airQualityData.voc, unit: "μg/m3", color: getPollutantColor('voc', airQualityData.voc) },
   ] : [];
 
+  const handleLogin = async (email, password) => {
+    try {
+      const formData = new FormData();
+      formData.append('username', email);
+      formData.append('password', password);
+
+      const response = await fetch('http://192.168.2.50:8000/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Login failed');
+      }
+
+      const data = await response.json();
+      console.log('Login response data:', data);
+      
+      // Store the token
+      await AsyncStorage.setItem('access_token', data.access_token);
+      console.log('Token stored in AsyncStorage');
+      
+      // Verify the token was stored
+      const storedToken = await AsyncStorage.getItem('access_token');
+      console.log('Stored token verification:', storedToken);
+      
+      navigation.navigate('Home');
+    } catch (error) {
+      console.error('Login error:', error);
+      // Handle error appropriately
+    }
+  };
+
   if (isLoading) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
@@ -410,6 +539,9 @@ const getAQIStatus = (aqi) => {
               <Text style={[styles.recommendationTitle, { color: recommendation.color }]}>
                 {recommendation.title}
               </Text>
+              {isFetchingRecommendation && (
+                <ActivityIndicator size="small" color={recommendation.color} style={styles.recommendationLoading} />
+              )}
             </View>
             <Text style={styles.recommendationMessage}>
               {recommendation.message}
@@ -731,6 +863,9 @@ const styles = StyleSheet.create({
     color: '#4CD964',
     fontWeight: '500',
     marginLeft: 6,
+  },
+  recommendationLoading: {
+    marginLeft: 8,
   },
 })
 

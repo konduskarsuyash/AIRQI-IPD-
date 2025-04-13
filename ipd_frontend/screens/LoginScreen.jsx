@@ -47,9 +47,11 @@ const LoginScreen = ({ navigation }) => {
     setLoading(true);
     try {
       const response = await login(email, password);
+      console.log('Login response:', response);
       
-      // Store the token
+      // Store the token and user_id
       await AsyncStorage.setItem('@Auth:token', response.access_token);
+      await AsyncStorage.setItem('@Auth:user_id', response.user_id);
       
       // Check asthma form status
       const hasSubmittedAsthmaForm = await checkAsthmaFormStatus(response.access_token);

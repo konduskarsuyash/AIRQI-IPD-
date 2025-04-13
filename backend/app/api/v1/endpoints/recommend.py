@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Form, UploadFile, File
+from fastapi import APIRouter, HTTPException, Form
 from pydantic import BaseModel
 from ....core.recommendation import DatabaseManager
 from agno.embedder.google import GeminiEmbedder
@@ -18,18 +18,20 @@ router = APIRouter()
 db_manager = DatabaseManager()
 embeddings = GeminiEmbedder()
 
+# Create a directory for LanceDB in the backend folder
+lancedb_dir = os.path.join(os.getcwd(), "lancedb_data")
+os.makedirs(lancedb_dir, exist_ok=True)
 
 class RecommendationRequest(BaseModel):
     user_id: int
 
 @router.post("/get_recommendations")
-async def get_recommendations(user_id: str = Form(...), file: UploadFile = File(...)):
+async def get_recommendations(user_id: str = Form(...)):
     """
     Fetch the latest user record and generate recommendations.
 
     Args:
         user_id (int): The ID of the user (sent as form-data).
-        file (UploadFile): A PDF file uploaded by the user.
 
     Returns:
         dict: The recommendations based on the user's latest record.
@@ -49,10 +51,30 @@ async def get_recommendations(user_id: str = Form(...), file: UploadFile = File(
         pm10 = sensor_data.get("pm10")
         no2 = sensor_data.get("no2")
 
+        # Get PDF file path from the report_pdf_url in the database
+        report_pdf_url = user_record.get("report_pdf_url")
+        print("report_pdf_url from db:", report_pdf_url)
+        
+        if not report_pdf_url:
+            raise HTTPException(status_code=404, detail="No PDF report found for the user")
+        
+        # Convert URL to file path
+        # The URL is in format /static/asthma-reports/{user_id}/{filename}.pdf
+        # We need to remove the leading slash and use proper path joining
+        relative_path = report_pdf_url.lstrip('/')
+        pdf_path = os.path.join(os.getcwd(), relative_path)
+        print("Constructed pdf_path:", pdf_path)
+        
+        if not os.path.exists(pdf_path):
+            print(f"File not found at path: {pdf_path}")
+            print(f"Current working directory: {os.getcwd()}")
+            print(f"Directory contents: {os.listdir(os.path.dirname(pdf_path))}")
+            raise HTTPException(status_code=404, detail="PDF report file not found")
+
         # Call the get_recommendation function
         recommendations = get_recommendation(
             user_record=user_record,
-            file=file,
+            pdf_path=pdf_path,
             pm1_0=pm1_0,
             pm2_5=pm2_5,
             pm10=pm10,
@@ -61,20 +83,20 @@ async def get_recommendations(user_id: str = Form(...), file: UploadFile = File(
 
         return {"user_id": user_id, "recommendations": recommendations}
     except Exception as e:
-        print("Error",e)
+        print("Error", e)
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
-def get_recommendation(user_record, file: UploadFile, pm1_0, pm2_5, pm10, no2):
+def get_recommendation(user_record, pdf_path, pm1_0, pm2_5, pm10, no2):
     """
     Extract each column from the user record and implement recommendation logic.
 
     Args:
         user_record (dict): The latest user record.
-        file (UploadFile): A PDF file uploaded by the user.
+        pdf_path (str): Path to the PDF file in static directory.
         pm1_0, pm2_5, pm10, no2: Pollutant levels from sensor data.
 
     Returns:
-        dict: Recommendations based on the user record and the uploaded file.
+        dict: Recommendations based on the user record and the PDF file.
     """
     # Extracting each column from the user_record
     severity = user_record.get("severity")
@@ -87,7 +109,7 @@ def get_recommendation(user_record, file: UploadFile, pm1_0, pm2_5, pm10, no2):
 
     # Call the AI agent
     response = ai_agent(
-        file=file,
+        pdf_path=pdf_path,
         severity=severity,
         symptoms=symptoms,
         trigger_factors=trigger_factors,
@@ -103,16 +125,7 @@ def get_recommendation(user_record, file: UploadFile, pm1_0, pm2_5, pm10, no2):
 
     return response
 
-def ai_agent(file: UploadFile, severity, symptoms, trigger_factors, report_pdf_url, allergies, checkup_date, last_attack_date, pm1_0, pm2_5, pm10, no2):
-    # Define the directory to save the uploaded file
-    upload_dir = "uploaded_files"
-    os.makedirs(upload_dir, exist_ok=True)  # Create the directory if it doesn't exist
-
-    # Save the uploaded file in the specified directory
-    pdf_path = os.path.join(upload_dir, file.filename)
-    with open(pdf_path, "wb") as f:
-        f.write(file.file.read())
-
+def ai_agent(pdf_path, severity, symptoms, trigger_factors, report_pdf_url, allergies, checkup_date, last_attack_date, pm1_0, pm2_5, pm10, no2):
     # Initialize the AGNO Agent
     agent = Agent(
         model=Gemini(id="gemini-1.5-flash"),
@@ -121,7 +134,7 @@ def ai_agent(file: UploadFile, severity, symptoms, trigger_factors, report_pdf_u
         knowledge=PDFKnowledgeBase(
             path=pdf_path,
             vector_db=LanceDb(
-                uri="tmp/lancedb",
+                uri=lancedb_dir,  # Use the created directory
                 table_name="documents",
                 search_type=SearchType.hybrid,
                 embedder=embeddings,
@@ -147,7 +160,7 @@ def ai_agent(file: UploadFile, severity, symptoms, trigger_factors, report_pdf_u
     Last Attack Date: {last_attack_date}
     These are the live pollutant levels:
     PM1.0: {pm1_0}, PM2.5: {pm2_5}, PM10: {pm10}, NO2: {no2}.
-    Based on this information and the PDF file (if uploaded), please provide personalized recommendations for the patient.
+    Based on this information and the PDF file, please provide personalized recommendations for the patient.
     The recommendations should be short and crisp.
     Give RECOMMENDATIONS IN 2 LINES IT should include based on the current pollutant levels these and as you have these problems you should do this."""
 

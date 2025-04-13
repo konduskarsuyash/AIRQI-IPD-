@@ -5,6 +5,7 @@ from datetime import datetime
 class Token(BaseModel):
     access_token: str
     token_type: str
+    user_id: str
 
 class TokenData(BaseModel):
     email: Optional[str] = None
@@ -24,7 +25,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
-
+    
 class User(UserBase):
     id: str
     disabled: Optional[bool] = None
