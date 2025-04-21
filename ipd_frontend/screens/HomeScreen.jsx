@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, SafeAreaView, StatusBar, TouchableOpacity, ScrollView, ActivityIndicator } from "react-native"
+import { View, Text, StyleSheet, SafeAreaView, StatusBar, TouchableOpacity, ScrollView, ActivityIndicator, Platform } from "react-native"
 import { Svg, Circle } from "react-native-svg"
 import * as Location from 'expo-location';
 import React, { useState, useEffect, useRef } from 'react';
@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import AQIForecast from './AQIForecast';
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Audio } from 'expo-av';
+
 
 // Supabase configuration
 const SUPABASE_URL = "https://dqyvyyvzymrbsxwpwbab.supabase.co";
@@ -32,7 +34,11 @@ export default function HomeScreen({ navigation }) {
   const [newDataReceived, setNewDataReceived] = useState(false);
   const [recommendation, setRecommendation] = useState(null);
   const [isFetchingRecommendation, setIsFetchingRecommendation] = useState(false);
+  const [sound, setSound] = useState(null);
+  const [isSoundReady, setIsSoundReady] = useState(false);
   const lastAQI = useRef(null);
+  const [soundInitAttempts, setSoundInitAttempts] = useState(0);
+  const soundInitTimerRef = useRef(null);
 
   useEffect(() => {
     getLocation();
@@ -45,19 +51,48 @@ export default function HomeScreen({ navigation }) {
         event: '*', // Listen for all change events (INSERT, UPDATE, DELETE)
         schema: 'public', 
         table: 'sensor_data' 
-      }, (payload) => {
-        console.log('New sensor data received:', payload.new);
-        
+      }, async (payload) => {
         // Show a brief refresh indicator
         setIsRefreshing(true);
         setNewDataReceived(true);
         
-        // Map the new data to our format
-        const newData = mapSensorData(payload.new);
-        setAirQualityData(newData);
+        // Get the current and previous readings
+        const { data, error } = await supabase
+          .from('sensor_data')
+          .select('*')
+          .order('timestamp', { ascending: false })
+          .limit(2);
         
-        // Generate recommendation based on new data
-        generateRecommendation(calculateAQI(newData).value);
+        if (error) {
+          console.error('Error fetching data for comparison:', error);
+          return;
+        }
+        
+        if (data && data.length >= 2) {
+          // Map the new data
+          const currentData = mapSensorData(data[0]);
+          const previousData = mapSensorData(data[1]);
+          
+          // Calculate AQIs
+          const currentAQI = calculateAQI(currentData).value;
+          const previousAQI = calculateAQI(previousData).value;
+          
+          console.log('Real-time AQI check - Current:', currentAQI, 'Previous:', previousAQI);
+          
+          // Only play sound if AQI has increased significantly
+          if (currentAQI > previousAQI + AQI_CHANGE_THRESHOLD) {
+            console.log('Significant AQI increase detected! Playing alert...');
+            await playAlertSound();
+          } else if (currentAQI < previousAQI - AQI_CHANGE_THRESHOLD) {
+            console.log('Significant AQI decrease detected, no sound played');
+          } else {
+            console.log('AQI change within threshold, no sound played');
+          }
+          
+          // Update the UI with new data
+          setAirQualityData(currentData);
+          generateRecommendation(currentAQI);
+        }
         
         // Hide refresh indicator after a short delay
         setTimeout(() => {
@@ -77,6 +112,52 @@ export default function HomeScreen({ navigation }) {
     };
   }, []);
 
+  // Load sound only once when component mounts
+  useEffect(() => {
+    const loadSoundOnce = async () => {
+      try {
+        console.log('Loading sound for the first time...');
+        const { sound: newSound } = await Audio.Sound.createAsync(
+          require('../assets/alert.mp3'),
+          { shouldPlay: false }
+        );
+        setSound(newSound);
+        setIsSoundReady(true);
+        console.log('Sound loaded and ready to play');
+      } catch (error) {
+        console.error('Error loading sound:', error);
+      }
+    };
+
+    loadSoundOnce();
+
+    // Cleanup function
+    return () => {
+      if (sound) {
+        console.log('Unloading sound...');
+        sound.unloadAsync();
+        setIsSoundReady(false);
+      }
+    };
+  }, []);
+
+  const playAlertSound = async () => {
+    try {
+      if (!sound || !isSoundReady) {
+        console.log('Sound not ready yet');
+        return;
+      }
+
+      console.log('Attempting to play sound...');
+      await sound.stopAsync();
+      await sound.setPositionAsync(0);
+      await sound.playAsync();
+      console.log('Sound played successfully');
+    } catch (error) {
+      console.error('Error playing sound:', error);
+    }
+  };
+
   // Function to fetch recommendations from the API
   const fetchRecommendations = async (aqiValue) => {
     try {
@@ -85,14 +166,14 @@ export default function HomeScreen({ navigation }) {
       const token = await AsyncStorage.getItem('@Auth:token');
       const userId = await AsyncStorage.getItem('@Auth:user_id');
       
-      console.log('Token retrieved in fetchRecommendations:', token);
-      console.log('User ID retrieved in fetchRecommendations:', userId);
+      // console.log('Token retrieved in fetchRecommendations:', token);
+      // console.log('User ID retrieved in fetchRecommendations:', userId);
       
       if (!token || !userId) {
         throw new Error('No authentication token or user ID found');
       }
 
-      const response = await fetch('http://192.168.2.50:8000/get_recommendations', {
+      const response = await fetch('http://192.168.1.33:8000/get_recommendations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -113,7 +194,7 @@ export default function HomeScreen({ navigation }) {
       }
 
       const data = await response.json();
-      console.log('Recommendations received:', data);
+      // console.log('Recommendations received:', data);
       
       // Update the recommendation state with the API response
       setRecommendation({
@@ -218,7 +299,7 @@ export default function HomeScreen({ navigation }) {
   // Generate health recommendation based on AQI
   const generateRecommendation = (aqiValue) => {
     if (shouldFetchRecommendations(aqiValue)) {
-      console.log('AQI change significant, fetching new recommendations');
+      // console.log('AQI change significant, fetching new recommendations');
       fetchRecommendations(aqiValue);
       lastAQI.current = aqiValue;
     } else {
@@ -259,7 +340,7 @@ export default function HomeScreen({ navigation }) {
       
       if (geocode && geocode.length > 0) {
         const address = geocode[0];
-        console.log(address);
+        // console.log(address);
         setLocationName(address.name || address.street || 'Unknown');
         setCity(address.city || address.region || 'Birmingham');
       }
@@ -271,7 +352,6 @@ export default function HomeScreen({ navigation }) {
   };
 
   const fetchAirQualityData = async () => {
-    // Only show loading indicator on initial load, not during refresh
     const initialLoad = !airQualityData;
     if (initialLoad) {
       setIsLoading(true);
@@ -280,36 +360,48 @@ export default function HomeScreen({ navigation }) {
     }
     
     try {
-      // console.log('Fetching data from Supabase...');
-      
+      // Fetch the last two readings to compare AQI values
       const { data, error } = await supabase
         .from('sensor_data')
         .select('*')
         .order('timestamp', { ascending: false })
-        .limit(1);
+        .limit(2);
       
-      console.log('Supabase response:', { data, error });
-  
       if (error) {
         console.error('Supabase error:', error);
         throw error;
       }
   
       if (data && data.length > 0) {
-        // console.log('Fetched air quality data:', data[0]);
-        // Map the data using the same helper function
-        const mappedData = mapSensorData(data[0]);
+        // Get current and previous readings
+        const currentData = data[0];
+        const previousData = data.length > 1 ? data[1] : null;
+        
+        // Map the current data
+        const mappedData = mapSensorData(currentData);
         setAirQualityData(mappedData);
         
-        // Generate recommendation based on AQI
-        const aqi = calculateAQI(mappedData).value;
-        generateRecommendation(aqi);
+        // Calculate current AQI
+        const currentAQI = calculateAQI(mappedData).value;
+        
+        // Calculate previous AQI if we have previous data
+        const previousAQI = previousData ? calculateAQI(mapSensorData(previousData)).value : null;
+        
+        console.log('Current AQI:', currentAQI, 'Previous AQI:', previousAQI);
+        
+        // Check for significant AQI increase compared to previous reading
+        if (previousAQI !== null && currentAQI > previousAQI + AQI_CHANGE_THRESHOLD) {
+          console.log('Significant AQI increase detected! Playing alert...');
+          await playAlertSound();
+        }
+        
+        lastAQI.current = currentAQI;
+        generateRecommendation(currentAQI);
       } else {
         console.log('No data found in Supabase!');
         const mockData = getMockAirQualityData();
         setAirQualityData(mockData);
         
-        // Generate recommendation based on mock AQI
         const aqi = calculateAQI(mockData).value;
         generateRecommendation(aqi);
       }
@@ -319,7 +411,6 @@ export default function HomeScreen({ navigation }) {
       const mockData = getMockAirQualityData();
       setAirQualityData(mockData);
       
-      // Generate recommendation based on mock AQI
       const aqi = calculateAQI(mockData).value;
       generateRecommendation(aqi);
     } finally {
@@ -367,7 +458,7 @@ export default function HomeScreen({ navigation }) {
 
 // PM1 AQI calculation (using similar thresholds as PM2.5 but adjusted)
 const calculatePM1AQI = (pm1) => {
-  console.log("PM1 Input:", pm1);
+  // console.log("PM1 Input:", pm1);
   let aqi;
   if (pm1 <= 10) aqi = Math.round((pm1 / 10) * 50);
   else if (pm1 <= 30) aqi = Math.round(((pm1 - 10) / (30 - 10)) * (100 - 51) + 51);
@@ -376,13 +467,13 @@ const calculatePM1AQI = (pm1) => {
   else if (pm1 <= 200) aqi = Math.round(((pm1 - 120) / (200 - 120)) * (300 - 201) + 201);
   else aqi = Math.round(((pm1 - 200) / (400 - 200)) * (500 - 301) + 301);
   
-  console.log("PM1 AQI:", aqi);
+  // console.log("PM1 AQI:", aqi);
   return aqi;
 };
 
 // PM2.5 AQI calculation (simplified)
 const calculatePM25AQI = (pm25) => {
-  console.log("PM2.5 Input:", pm25);
+  // console.log("PM2.5 Input:", pm25);
   let aqi;
   if (pm25 <= 12) aqi = Math.round((pm25 / 12) * 50);
   else if (pm25 <= 35.4) aqi = Math.round(((pm25 - 12) / (35.4 - 12)) * (100 - 51) + 51);
@@ -391,13 +482,13 @@ const calculatePM25AQI = (pm25) => {
   else if (pm25 <= 250.4) aqi = Math.round(((pm25 - 150.4) / (250.4 - 150.4)) * (300 - 201) + 201);
   else aqi = Math.round(((pm25 - 250.4) / (500.4 - 250.4)) * (500 - 301) + 301);
   
-  console.log("PM2.5 AQI:", aqi);
+  // console.log("PM2.5 AQI:", aqi);
   return aqi;
 };
 
 // PM10 AQI calculation (simplified)
 const calculatePM10AQI = (pm10) => {
-  console.log("PM10 Input:", pm10);
+  // console.log("PM10 Input:", pm10);
   let aqi;
   if (pm10 <= 54) aqi = Math.round((pm10 / 54) * 50);
   else if (pm10 <= 154) aqi = Math.round(((pm10 - 54) / (154 - 54)) * (100 - 51) + 51);
@@ -406,7 +497,7 @@ const calculatePM10AQI = (pm10) => {
   else if (pm10 <= 424) aqi = Math.round(((pm10 - 354) / (424 - 354)) * (300 - 201) + 201);
   else aqi = Math.round(((pm10 - 424) / (604 - 424)) * (500 - 301) + 301);
 
-  console.log("PM10 AQI:", aqi);
+  // console.log("PM10 AQI:", aqi);
   return aqi;
 };
 
@@ -414,7 +505,7 @@ const calculatePM10AQI = (pm10) => {
 
 // Get AQI status based on value
 const getAQIStatus = (aqi) => {
-  console.log("AQI Input:", aqi);
+  // console.log("AQI Input:", aqi);
   let status;
   if (aqi <= 50) status = { status: "Good", color: "#4CD964" }; // Green
   else if (aqi <= 100) status = { status: "Moderate", color: "#FFCC00" }; // Yellow
@@ -423,7 +514,7 @@ const getAQIStatus = (aqi) => {
   else if (aqi <= 300) status = { status: "Very Unhealthy", color: "#AF52DE" }; // Purple
   else status = { status: "Hazardous", color: "#7e0023" }; // Maroon
 
-  console.log("AQI Status:", status);
+  // console.log("AQI Status:", status);
   return status;
 };
 
@@ -465,7 +556,7 @@ const getAQIStatus = (aqi) => {
       formData.append('username', email);
       formData.append('password', password);
 
-      const response = await fetch('http://192.168.2.50:8000/login', {
+      const response = await fetch('http://192.168.1.33:8000/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -478,15 +569,15 @@ const getAQIStatus = (aqi) => {
       }
 
       const data = await response.json();
-      console.log('Login response data:', data);
+      // console.log('Login response data:', data);
       
       // Store the token
       await AsyncStorage.setItem('access_token', data.access_token);
-      console.log('Token stored in AsyncStorage');
+      // console.log('Token stored in AsyncStorage');
       
       // Verify the token was stored
       const storedToken = await AsyncStorage.getItem('access_token');
-      console.log('Stored token verification:', storedToken);
+      // console.log('Stored token verification:', storedToken);
       
       navigation.navigate('Home');
     } catch (error) {
@@ -512,6 +603,14 @@ const getAQIStatus = (aqi) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
+        {/* Test Sound Button */}
+        {/* <TouchableOpacity 
+          style={styles.testButton}
+          onPress={playAlertSound}
+        >
+          <Text style={styles.testButtonText}>Test Sound</Text>
+        </TouchableOpacity> */}
+
         {/* Welcome Section */}
         <View style={styles.welcomeSection}>
           <Text style={styles.welcomeText}>Welcome Back 👋</Text>
@@ -866,6 +965,18 @@ const styles = StyleSheet.create({
   },
   recommendationLoading: {
     marginLeft: 8,
+  },
+  testButton: {
+    backgroundColor: '#2563EB',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  testButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 })
 
