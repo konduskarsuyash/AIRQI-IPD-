@@ -35,6 +35,7 @@ const LoginScreen = ({ navigation }) => {
   };
 
   const handleLogin = async () => {
+    console.log('Login attempt with email:', email, 'and password:', password);
     if (!email.trim()) {
       Alert.alert('Error', 'Please enter your email');
       return;
@@ -45,6 +46,7 @@ const LoginScreen = ({ navigation }) => {
     }
 
     setLoading(true);
+    console.log('after loading');
     try {
       const response = await login(email, password);
       console.log('Login response:', response);

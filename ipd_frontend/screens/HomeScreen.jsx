@@ -21,10 +21,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // postgresql://postgres:DJ01v$04@db.dqyvyyvzymrbsxwpwbab.supabase.co:5432/postgres
 
 // Constants for AQI change threshold
-const AQI_CHANGE_THRESHOLD = 20; // Only call API if AQI changes by more than this value
+const AQI_CHANGE_THRESHOLD = 10; // Only call API if AQI changes by more than this value
 
 export default function HomeScreen({ navigation }) {
-  const username = "Anamoul"
+  const username = "suyash"
   const [locationName, setLocationName] = useState('Loading...');
   const [city, setCity] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -39,124 +39,191 @@ export default function HomeScreen({ navigation }) {
   const lastAQI = useRef(null);
   const [soundInitAttempts, setSoundInitAttempts] = useState(0);
   const soundInitTimerRef = useRef(null);
+  const soundLoopTimerRef = useRef(null);
+  const MAX_INIT_ATTEMPTS = 3;
+  const BEEP_DURATION = 100000; // 10 seconds in milliseconds
 
   useEffect(() => {
     getLocation();
-    fetchAirQualityData(); // Initial fetch
+    fetchAirQualityData();
     
-    // Set up real-time subscription to Supabase
     const channel = supabase
       .channel('sensor_data_updates')
       .on('postgres_changes', { 
-        event: '*', // Listen for all change events (INSERT, UPDATE, DELETE)
+        event: '*',
         schema: 'public', 
         table: 'sensor_data' 
       }, async (payload) => {
-        // Show a brief refresh indicator
         setIsRefreshing(true);
         setNewDataReceived(true);
         
-        // Get the current and previous readings
-        const { data, error } = await supabase
-          .from('sensor_data')
-          .select('*')
-          .order('timestamp', { ascending: false })
-          .limit(2);
-        
-        if (error) {
-          console.error('Error fetching data for comparison:', error);
-          return;
-        }
-        
-        if (data && data.length >= 2) {
-          // Map the new data
-          const currentData = mapSensorData(data[0]);
-          const previousData = mapSensorData(data[1]);
+        try {
+          // Get the latest reading
+          const { data, error } = await supabase
+            .from('sensor_data')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(1);
           
-          // Calculate AQIs
-          const currentAQI = calculateAQI(currentData).value;
-          const previousAQI = calculateAQI(previousData).value;
-          
-          console.log('Real-time AQI check - Current:', currentAQI, 'Previous:', previousAQI);
-          
-          // Only play sound if AQI has increased significantly
-          if (currentAQI > previousAQI + AQI_CHANGE_THRESHOLD) {
-            console.log('Significant AQI increase detected! Playing alert...');
-            await playAlertSound();
-          } else if (currentAQI < previousAQI - AQI_CHANGE_THRESHOLD) {
-            console.log('Significant AQI decrease detected, no sound played');
-          } else {
-            console.log('AQI change within threshold, no sound played');
+          if (error) {
+            console.error('Error fetching data:', error);
+            return;
           }
           
-          // Update the UI with new data
-          setAirQualityData(currentData);
-          generateRecommendation(currentAQI);
+          if (data && data.length > 0) {
+            const currentData = mapSensorData(data[0]);
+            console.log('New sensor data received:', currentData);
+            
+            // Calculate AQI and update UI
+            const aqiInfo = calculateAQI(currentData);
+            console.log('Calculated AQI:', aqiInfo.value);
+            
+            // Update the UI with new data
+            setAirQualityData(currentData);
+            
+            // Check AQI level and play sound if needed
+            checkAQIAndAlert(aqiInfo.value);
+            
+            // Generate recommendation
+            generateRecommendation(aqiInfo.value);
+          }
+        } catch (error) {
+          console.error('Error processing new data:', error);
+        } finally {
+          setTimeout(() => setIsRefreshing(false), 1000);
+          setTimeout(() => setNewDataReceived(false), 3000);
         }
-        
-        // Hide refresh indicator after a short delay
-        setTimeout(() => {
-          setIsRefreshing(false);
-        }, 1000);
-        
-        // Hide the "new data" message after 3 seconds
-        setTimeout(() => {
-          setNewDataReceived(false);
-        }, 3000);
       })
       .subscribe();
     
-    // Clean up the subscription when component unmounts
     return () => {
       supabase.removeChannel(channel);
     };
   }, []);
 
-  // Load sound only once when component mounts
-  useEffect(() => {
-    const loadSoundOnce = async () => {
-      try {
-        console.log('Loading sound for the first time...');
-        const { sound: newSound } = await Audio.Sound.createAsync(
-          require('../assets/alert.mp3'),
-          { shouldPlay: false }
-        );
-        setSound(newSound);
-        setIsSoundReady(true);
-        console.log('Sound loaded and ready to play');
-      } catch (error) {
-        console.error('Error loading sound:', error);
-      }
-    };
-
-    loadSoundOnce();
-
-    // Cleanup function
-    return () => {
-      if (sound) {
-        console.log('Unloading sound...');
-        sound.unloadAsync();
-        setIsSoundReady(false);
-      }
-    };
-  }, []);
-
-  const playAlertSound = async () => {
+  // Initialize audio system and load sound
+// 1. Simplify the sound initialization in the useEffect
+useEffect(() => {
+  let isMounted = true;
+  
+  const loadSound = async () => {
     try {
-      if (!sound || !isSoundReady) {
-        console.log('Sound not ready yet');
+      // Initialize audio system
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        staysActiveInBackground: true,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+      
+      console.log('Loading sound...');
+      // Load sound file
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        require('../assets/alert.mp3'),
+        { shouldPlay: false }
+      );
+      
+      if (!isMounted) {
+        await newSound.unloadAsync();
         return;
       }
-
-      console.log('Attempting to play sound...');
-      await sound.stopAsync();
-      await sound.setPositionAsync(0);
-      await sound.playAsync();
-      console.log('Sound played successfully');
+      
+      // Set sound ready when loaded
+      setSound(newSound);
+      setIsSoundReady(true);
+      console.log('Sound loaded successfully and ready to play');
+      
     } catch (error) {
-      console.error('Error playing sound:', error);
+      console.error('Error loading sound:', error);
+      // Simple retry mechanism
+      if (isMounted) {
+        setTimeout(loadSound, 1000);
+      }
     }
   };
+  
+  loadSound();
+  
+  return () => {
+    isMounted = false;
+    if (sound) {
+      sound.unloadAsync();
+    }
+    // Clear any timers
+    if (soundLoopTimerRef.current) clearTimeout(soundLoopTimerRef.current);
+  };
+}, []);
+
+// 2. Improve the playAlertSound function to handle not-ready sound
+const playAlertSound = async () => {
+  console.log('Attempting to play alert sound, ready:', isSoundReady);
+  
+  // If sound is not ready, try to initialize it
+  if (!sound || !isSoundReady) {
+    try {
+      console.log('Sound not ready, attempting to initialize...');
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        staysActiveInBackground: true,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+            
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        require('../assets/alert.mp3'),
+        { shouldPlay: true } // Play immediately
+      );
+      
+      setSound(newSound);
+      setIsSoundReady(true);
+      
+      // Set a timeout to stop after 10 seconds
+      setTimeout(async () => {
+        try {
+          if (newSound) {
+            await newSound.stopAsync();
+            console.log('Alert sound stopped after 10 seconds');
+          }
+        } catch (stopError) {
+          console.error('Error stopping sound:', stopError);
+        }
+      }, BEEP_DURATION);
+      
+      return;
+    } catch (error) {
+      console.error('Emergency sound initialization failed:', error);
+    }
+  }
+  
+  // If sound is ready, clear existing timers and play
+  try {
+    if (soundLoopTimerRef.current) {
+      clearTimeout(soundLoopTimerRef.current);
+    }
+    
+    console.log('Playing 10-second alert sound...');
+    
+    // Try to reset and play the sound
+    await sound.stopAsync().catch(() => {});
+    await sound.setPositionAsync(0).catch(() => {});
+    await sound.playAsync();
+    
+    // Stop after 10 seconds
+    setTimeout(async () => {
+      try {
+        await sound.stopAsync();
+        console.log('Alert sound stopped after 10 seconds');
+      } catch (stopError) {
+        console.error('Error stopping sound:', stopError);
+      }
+    }, BEEP_DURATION);
+    
+  } catch (error) {
+    console.error('Error playing sound:', error);
+  }
+};
 
   // Function to fetch recommendations from the API
   const fetchRecommendations = async (aqiValue) => {
@@ -295,7 +362,15 @@ export default function HomeScreen({ navigation }) {
     
     setRecommendation(rec);
   };
-
+  const AQI_LEVELS = {
+    GOOD: { max: 50 },
+    MODERATE: { max: 100 },
+    SENSITIVE: { max: 150 },
+    UNHEALTHY: { max: 200 },
+    VERY_UNHEALTHY: { max: 300 },
+    HAZARDOUS: { max: 500 }
+  };
+  
   // Generate health recommendation based on AQI
   const generateRecommendation = (aqiValue) => {
     if (shouldFetchRecommendations(aqiValue)) {
@@ -383,11 +458,13 @@ export default function HomeScreen({ navigation }) {
         
         // Calculate current AQI
         const currentAQI = calculateAQI(mappedData).value;
-        
+
         // Calculate previous AQI if we have previous data
         const previousAQI = previousData ? calculateAQI(mapSensorData(previousData)).value : null;
-        
-        console.log('Current AQI:', currentAQI, 'Previous AQI:', previousAQI);
+
+
+        checkAQIAndAlert(currentAQI);
+
         
         // Check for significant AQI increase compared to previous reading
         if (previousAQI !== null && currentAQI > previousAQI + AQI_CHANGE_THRESHOLD) {
@@ -425,6 +502,19 @@ export default function HomeScreen({ navigation }) {
   };
   
   
+// Update the checkAQIAndAlert function to handle high AQI values
+const checkAQIAndAlert = (aqiValue) => {
+  console.log('Checking AQI value for alert:', aqiValue);
+  
+  // Determine severity and play sound based on AQI thresholds
+  if (aqiValue > AQI_LEVELS.UNHEALTHY.max) {
+    console.log('SEVERE: AQI is very unhealthy or hazardous, playing alert');
+    playAlertSound();
+  } else if (aqiValue > AQI_LEVELS.SENSITIVE.max) {
+    console.log('WARNING: AQI is unhealthy, playing alert');
+    playAlertSound();
+  }
+};
 
   // Mock data function for fallback
   const getMockAirQualityData = () => {
@@ -447,27 +537,36 @@ export default function HomeScreen({ navigation }) {
     const pm25AQI = calculatePM25AQI(data.pm2_5);
     const pm10AQI = calculatePM10AQI(data.pm10);
     
-    // Calculate the average AQI value instead of taking the maximum
-    const avgAQI = Math.round((pm1AQI + pm25AQI + pm10AQI) / 3);
+    // Take the maximum AQI value instead of average for more sensitive alerts
+    const maxAQI = Math.max(pm1AQI, pm25AQI, pm10AQI);
+    console.log('PM1 AQI:', pm1AQI, 'PM2.5 AQI:', pm25AQI, 'PM10 AQI:', pm10AQI, 'Max AQI:', maxAQI);
     
     return {
-      value: avgAQI,
-      ...getAQIStatus(avgAQI)
+      value: maxAQI,
+      ...getAQIStatus(maxAQI)
     };
   };
 
 // PM1 AQI calculation (using similar thresholds as PM2.5 but adjusted)
 const calculatePM1AQI = (pm1) => {
-  // console.log("PM1 Input:", pm1);
+  console.log("Calculating PM1 AQI for value:", pm1);
   let aqi;
-  if (pm1 <= 10) aqi = Math.round((pm1 / 10) * 50);
-  else if (pm1 <= 30) aqi = Math.round(((pm1 - 10) / (30 - 10)) * (100 - 51) + 51);
-  else if (pm1 <= 50) aqi = Math.round(((pm1 - 30) / (50 - 30)) * (150 - 101) + 101);
-  else if (pm1 <= 120) aqi = Math.round(((pm1 - 50) / (120 - 50)) * (200 - 151) + 151);
-  else if (pm1 <= 200) aqi = Math.round(((pm1 - 120) / (200 - 120)) * (300 - 201) + 201);
-  else aqi = Math.round(((pm1 - 200) / (400 - 200)) * (500 - 301) + 301);
-  
-  // console.log("PM1 AQI:", aqi);
+  if (pm1 <= 10) {
+    aqi = Math.round((pm1 / 10) * 50);
+  } else if (pm1 <= 30) {
+    aqi = Math.round(((pm1 - 10) / 20) * 49 + 51);
+  } else if (pm1 <= 50) {
+    aqi = Math.round(((pm1 - 30) / 20) * 49 + 101);
+  } else if (pm1 <= 120) {
+    aqi = Math.round(((pm1 - 50) / 70) * 49 + 151);
+  } else if (pm1 <= 200) {
+    aqi = Math.round(((pm1 - 120) / 80) * 99 + 201);
+  } else {
+    // For very high PM1 values (> 200)
+    aqi = Math.round(((pm1 - 200) / 200) * 199 + 301);
+    if (aqi > 500) aqi = 500; // Cap at 500
+  }
+  console.log("Calculated PM1 AQI:", aqi);
   return aqi;
 };
 
@@ -550,41 +649,7 @@ const getAQIStatus = (aqi) => {
     { name: "VOC", value: airQualityData.voc, unit: "μg/m3", color: getPollutantColor('voc', airQualityData.voc) },
   ] : [];
 
-  const handleLogin = async (email, password) => {
-    try {
-      const formData = new FormData();
-      formData.append('username', email);
-      formData.append('password', password);
 
-      const response = await fetch('http://192.168.1.33:8000/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error('Login failed');
-      }
-
-      const data = await response.json();
-      // console.log('Login response data:', data);
-      
-      // Store the token
-      await AsyncStorage.setItem('access_token', data.access_token);
-      // console.log('Token stored in AsyncStorage');
-      
-      // Verify the token was stored
-      const storedToken = await AsyncStorage.getItem('access_token');
-      // console.log('Stored token verification:', storedToken);
-      
-      navigation.navigate('Home');
-    } catch (error) {
-      console.error('Login error:', error);
-      // Handle error appropriately
-    }
-  };
 
   if (isLoading) {
     return (
