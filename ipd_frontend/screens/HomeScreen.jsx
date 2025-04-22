@@ -157,7 +157,7 @@ useEffect(() => {
 
 // 2. Improve the playAlertSound function to handle not-ready sound
 const playAlertSound = async () => {
-  console.log('Attempting to play alert sound, ready:', isSoundReady);
+  console.log('Attempting to play alert sound, ready:', isSoundReady, 'sound object:', sound ? 'exists' : 'null');
   
   // If sound is not ready, try to initialize it
   if (!sound || !isSoundReady) {
@@ -175,6 +175,8 @@ const playAlertSound = async () => {
         require('../assets/alert.mp3'),
         { shouldPlay: true } // Play immediately
       );
+      
+      console.log('New sound created successfully');
       
       setSound(newSound);
       setIsSoundReady(true);
@@ -203,12 +205,12 @@ const playAlertSound = async () => {
       clearTimeout(soundLoopTimerRef.current);
     }
     
-    console.log('Playing 10-second alert sound...');
+    console.log('Playing 10-second alert sound with existing sound object...');
     
     // Try to reset and play the sound
-    await sound.stopAsync().catch(() => {});
-    await sound.setPositionAsync(0).catch(() => {});
-    await sound.playAsync();
+    await sound.stopAsync().catch((e) => console.log('Stop error (expected if not playing):', e));
+    await sound.setPositionAsync(0).catch((e) => console.log('Position reset error:', e));
+    await sound.playAsync().catch((e) => console.log('Play error:', e));
     
     // Stop after 10 seconds
     setTimeout(async () => {
@@ -484,7 +486,7 @@ const playAlertSound = async () => {
       }
     } catch (error) {
       console.error('Error fetching air quality data:', error);
-      setError('Failed to fetch air quality data');
+      // setError('Failed to fetch air quality data');
       const mockData = getMockAirQualityData();
       setAirQualityData(mockData);
       
@@ -507,11 +509,18 @@ const checkAQIAndAlert = (aqiValue) => {
   console.log('Checking AQI value for alert:', aqiValue);
   
   // Determine severity and play sound based on AQI thresholds
-  if (aqiValue > AQI_LEVELS.UNHEALTHY.max) {
+  if (aqiValue > AQI_LEVELS.GOOD.max) {
+    console.log('SEVERE: AQI is very unhealthy or hazardous, playing alert');
+    playAlertSound();
+  }
+  else if (aqiValue > AQI_LEVELS.UNHEALTHY.max) {
     console.log('SEVERE: AQI is very unhealthy or hazardous, playing alert');
     playAlertSound();
   } else if (aqiValue > AQI_LEVELS.SENSITIVE.max) {
     console.log('WARNING: AQI is unhealthy, playing alert');
+    playAlertSound();
+  } else if (aqiValue > AQI_LEVELS.MODERATE.max) {
+    console.log('CAUTION: AQI is above moderate levels, playing alert');
     playAlertSound();
   }
 };
@@ -668,13 +677,6 @@ const getAQIStatus = (aqi) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Test Sound Button */}
-        {/* <TouchableOpacity 
-          style={styles.testButton}
-          onPress={playAlertSound}
-        >
-          <Text style={styles.testButtonText}>Test Sound</Text>
-        </TouchableOpacity> */}
 
         {/* Welcome Section */}
         <View style={styles.welcomeSection}>
@@ -733,7 +735,7 @@ const getAQIStatus = (aqi) => {
               {isRefreshing && (
                 <ActivityIndicator size="small" color="#2563EB" style={styles.refreshIndicator} />
               )}
-              {error && <Text style={styles.errorText}>{error}</Text>}
+              {/* {error && <Text style={styles.errorText}>{error}</Text>} */}
             </View>
           </View>
 

@@ -15,11 +15,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const API_TOKEN = '22189a3e2891ce867a4a9773a91900f20960787c';
 
 const categorizeValue = (aqi) => {
-  if (aqi <= 50) return { label: 'Good', color: 'rgba(0, 228, 0, 0.8)', borderColor: '#00E400' };
-  if (aqi <= 100) return { label: 'Moderate', color: 'rgba(255, 255, 0, 0.8)', borderColor: '#FFFF00' };
-  if (aqi <= 150) return { label: 'Unhealthy for Sensitive Groups', color: 'rgba(255, 126, 0, 0.8)', borderColor: '#FF7E00' };
-  if (aqi <= 200) return { label: 'Unhealthy', color: 'rgba(255, 0, 0, 0.8)', borderColor: '#FF0000' };
-  if (aqi <= 300) return { label: 'Very Unhealthy', color: 'rgba(143, 63, 151, 0.8)', borderColor: '#8F3F97' };
+  if (aqi <= 50) return { label: 'Good', color: 'rgba(76, 217, 100, 0.8)', borderColor: '#4CD964' };
+  if (aqi <= 100) return { label: 'Moderate', color: 'rgba(255, 204, 0, 0.8)', borderColor: '#FFCC00' };
+  if (aqi <= 150) return { label: 'Unhealthy for Sensitive Groups', color: 'rgba(255, 149, 0, 0.8)', borderColor: '#FF9500' };
+  if (aqi <= 200) return { label: 'Unhealthy', color: 'rgba(255, 59, 48, 0.8)', borderColor: '#FF3B30' };
+  if (aqi <= 300) return { label: 'Very Unhealthy', color: 'rgba(175, 82, 222, 0.8)', borderColor: '#AF52DE' };
   return { label: 'Hazardous', color: 'rgba(126, 0, 35, 0.8)', borderColor: '#7E0023' };
 };
 
@@ -71,9 +71,11 @@ const calculateAQI = (data) => {
   const pm25AQI = calculatePM25AQI(data.pm2_5);
   const pm10AQI = calculatePM10AQI(data.pm10);
   
-  // Calculate the average AQI value
-  const avgAQI = Math.round((pm1AQI + pm25AQI + pm10AQI) / 3);
-  return avgAQI;
+  // Take the maximum AQI value instead of average for more sensitive alerts
+  const maxAQI = Math.max(pm1AQI, pm25AQI, pm10AQI);
+  console.log('PM1 AQI:', pm1AQI, 'PM2.5 AQI:', pm25AQI, 'PM10 AQI:', pm10AQI, 'Max AQI:', maxAQI);
+  
+  return maxAQI;
 };
 
 const AirQualityMap = () => {
