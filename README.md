@@ -1,6 +1,4 @@
-Here’s your updated README with the YouTube link added under a new section:
 
----
 
 # AI-Driven Air Quality Prediction and Alerts 🚦🌫️
 
